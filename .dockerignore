@@ -1,0 +1,10 @@
+node_modules
+downloads/*
+auth_info_baileys/*
+.git
+.github
+__pycache__
+*.pyc
+*.log
+.env
+.DS_Store

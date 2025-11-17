@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  whatsapp-bot:
+    build: .
+    container_name: whatsapp-bot
+    restart: unless-stopped
+    environment:
+      - PHONE_NUMBER=${PHONE_NUMBER}
+      - SCRAPER_SERVER_URL=http://127.0.0.1:8001
+      - NODE_ENV=production
+    volumes:
+      - ./auth_info_baileys:/app/auth_info_baileys
+      - ./downloads:/app/downloads
+    ports:
+      - "8001:8001"
+    stdin_open: true
+    tty: true

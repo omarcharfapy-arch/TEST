@@ -350,30 +350,21 @@ async function connectToWhatsApp() {
             log.info(`📨 Message from ${sender.split('@')[0]}: ${textMessage}`);
 
             if (textMessage.toLowerCase() === 'hi' || textMessage.toLowerCase() === 'hello' || textMessage.toLowerCase() === 'السلام عليكم' || textMessage.toLowerCase() === 'مرحبا') {
-                const welcomeMessage = `╔════════════════════════════════════════════════╗
-║  🤖 *بوت تحميل التطبيقات الذكي*  ║
-╚════════════════════════════════════════════════╝
+                const welcomeMessage = `⚡ *بوت تحميل التطبيقات*
 
-✨ *أهلاً وسهلاً بك!*
+🔥 *اكتب اسم التطبيق فقط*
 
-📱 *كيفية الاستخدام:*
-اكتب اسم التطبيق المراد تحميله
+مثال: واتساب، فري فاير، بابجي، تيك توك
 
-📋 *أمثلة سريعة:*
-• واتساب • فري فاير • بابجي
-• انستقرام • تيك توك • يوتيوب
+⚠️ *قواعد الاستخدام:*
+• تحميل سريع حتى ${MAX_FILE_SIZE_MB}MB
+• APK و XAPK مدعومة
+• لا تسأل، فقط أرسل الاسم
 
-✨ *المميزات:*
-✅ تحميل سريع جداً ⚡
-✅ يدعم APK و XAPK 📦
-✅ أحجام حتى ${MAX_FILE_SIZE_MB}MB 💾
-✅ ${QUEUE_CONCURRENCY}+ مستخدم متزامن 👥
-✅ معلومات التطبيق الكاملة 📊
-
-═════════════════════════════════════════════════
-📲 *تابعني للمزيد:*
+━━━━━━━━━━━━━━━━━━━━━
+📸 *تابعني على انستقرام وادعمني:*
 ${DEVELOPER_INFO.instagram}
-═════════════════════════════════════════════════`;
+━━━━━━━━━━━━━━━━━━━━━`;
 
                 await sendMessage(sock, sender, { text: welcomeMessage });
                 return;
@@ -489,7 +480,7 @@ async function handleAppRequest(textMessage, sender, messageKey, sock, requestId
         if (!result) {
             log.error(`No result returned from scraper`);
             await sendMessage(sock, sender, { 
-                text: `❌ فشل في معالجة الطلب. حاول مرة أخرى.\n\n📲 *تابعني:* ${DEVELOPER_INFO.instagram}`
+                text: `❌ *فشل الطلب*\n\nحاول مرة أخرى.\n\n━━━━━━━━━━━━━━━━━━━━━\n📸 تابعني على انستقرام:\n${DEVELOPER_INFO.instagram}`
             });
             return;
         }
@@ -498,14 +489,11 @@ async function handleAppRequest(textMessage, sender, messageKey, sock, requestId
             log.error(`خطأ: ${result.error}`);
             if (isConnected && !isReconnecting) {
                 if (result.error.includes('فشل الاتصال')) {
-                    const friendly = `⚠️ *خطأ في اتصال الخادم*\n\n` +
-                        `لا يمكن الوصول إلى خادم التحميل الآن، سيتم إعادة المحاولة تلقائياً.` +
-                        `\n
-إذا استمر الخطأ، يرجى المحاولة لاحقًا.`;
+                    const friendly = `⚠️ *خطأ في الخادم*\n\nجاري إعادة المحاولة تلقائياً...`;
                     await sendMessage(sock, sender, { text: friendly });
                 } else {
                     await sendMessage(sock, sender, { 
-                        text: `❌ ${result.error}\n\n📲 *تابعني:* ${DEVELOPER_INFO.instagram}`
+                        text: `❌ ${result.error}\n\n━━━━━━━━━━━━━━━━━━━━━\n📸 تابعني على انستقرام:\n${DEVELOPER_INFO.instagram}`
                     });
                 }
             }
@@ -516,22 +504,23 @@ async function handleAppRequest(textMessage, sender, messageKey, sock, requestId
             log.warn(`ملف كبير: ${result.sizeMB} MB`);
             
             await sendMessage(sock, sender, { 
-                text: `⚠️ *الملف كبير جداً!*\n\n` +
+                text: `⚠️ *الملف كبير جداً*\n\n` +
                     `📱 ${result.name}\n` +
-                    `💾 ${result.size}\n` +
+                    `💾 الحجم: ${result.size}\n` +
                     `⚠️ الحد الأقصى: ${MAX_FILE_SIZE_MB}MB\n\n` +
-                    `📲 *تابعني:* ${DEVELOPER_INFO.instagram}`
+                    `━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `📸 تابعني على انستقرام:\n${DEVELOPER_INFO.instagram}`
             });
             return;
         }
 
-        const infoMessage = `📦 *تفاصيل التطبيق*\n\n` +
-            `📱 ${result.name}\n` +
-            `🔢 ${result.version}\n` +
-            `💾 ${result.size}\n` +
-            `⭐ ${result.rating || 'N/A'}\n\n` +
+        const infoMessage = `📦 *${result.name}*\n\n` +
+            `🔢 الإصدار: ${result.version}\n` +
+            `💾 الحجم: ${result.size}\n` +
+            `⭐ التقييم: ${result.rating || 'N/A'}\n\n` +
             `⏳ جاري التحميل...\n\n` +
-            `📲 *تابعني:* ${DEVELOPER_INFO.instagram}`;
+            `━━━━━━━━━━━━━━━━━━━━━\n` +
+            `📸 تابعني على انستقرام:\n${DEVELOPER_INFO.instagram}`;
 
         if (result.icon) {
             try {
@@ -554,7 +543,7 @@ async function handleAppRequest(textMessage, sender, messageKey, sock, requestId
         if (!fs.existsSync(filePath)) {
             log.error(`الملف غير موجود: ${filePath}`);
             await sendMessage(sock, sender, { 
-                text: `❌ فشل العثور على الملف المحمل\n\n📲 *تابعني:* ${DEVELOPER_INFO.instagram}`
+                text: `❌ *الملف غير موجود*\n\n━━━━━━━━━━━━━━━━━━━━━\n📸 تابعني على انستقرام:\n${DEVELOPER_INFO.instagram}`
             });
             return;
         }
@@ -569,13 +558,12 @@ async function handleAppRequest(textMessage, sender, messageKey, sock, requestId
         });
 
         if (result.isXapk) {
-            const xapkInstructions = `📦 *ملف XAPK*\n\n` +
-                `⚠️ يحتوي على بيانات إضافية (OBB)\n\n` +
-                `*طريقة التثبيت:*\n` +
-                `1️⃣ حمّل XAPK Installer من بلاي\n` +
+            const xapkInstructions = `📦 *ملف XAPK - يحتاج تطبيق مثبت*\n\n` +
+                `1️⃣ حمّل XAPK Installer من Google Play\n` +
                 `2️⃣ افتح التطبيق واختر الملف\n` +
                 `3️⃣ اضغط تثبيت\n\n` +
-                `📲 *تابعني:* ${DEVELOPER_INFO.instagram}`;
+                `━━━━━━━━━━━━━━━━━━━━━\n` +
+                `📸 تابعني على انستقرام:\n${DEVELOPER_INFO.instagram}`;
             
             await sendMessage(sock, sender, { text: xapkInstructions });
         }
@@ -587,16 +575,23 @@ async function handleAppRequest(textMessage, sender, messageKey, sock, requestId
             }
         });
 
-        // Refresh cache TTL to avoid deletion right after a send
+        // Delete the file after successful send
+        try {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                log.success(`🗑️ Deleted file after send: ${result.filename}`);
+            }
+        } catch (deleteErr) {
+            log.warn(`Failed to delete file after send: ${deleteErr.message}`);
+        }
+
+        // Remove from cache since file is deleted
         try {
             const cacheKey = appName.toLowerCase();
-            const cached = appCache.get(cacheKey);
-            if (cached) {
-                appCache.ttl(cacheKey, SENT_KEEP_TTL);
-                log.info(`🔒 Extended TTL for cached ${cacheKey} by ${SENT_KEEP_TTL}s`);
-            }
+            appCache.del(cacheKey);
+            log.info(`🗑️ Removed from cache: ${cacheKey}`);
         } catch (err) {
-            log.warn(`Failed to extend cache TTL: ${err.message}`);
+            log.warn(`Failed to remove from cache: ${err.message}`);
         }
 
         const totalTime = Date.now() - startTime;
@@ -610,7 +605,7 @@ async function handleAppRequest(textMessage, sender, messageKey, sock, requestId
         
         if (isConnected && !isReconnecting) {
             await sendMessage(sock, sender, { 
-                text: `❌ حدث خطأ أثناء معالجة طلبك\n\n📲 *تابعني:* ${DEVELOPER_INFO.instagram}`
+                text: `❌ *خطأ في المعالجة*\n\n━━━━━━━━━━━━━━━━━━━━━\n📸 تابعني على انستقرام:\n${DEVELOPER_INFO.instagram}`
             });
         }
     } finally {
@@ -686,88 +681,45 @@ async function searchAndDownloadApp(appName) {
                 log.warn('Could not ensure scraper server availability, proceeding with local call if needed');
             }
 
-            // Use scraper server (HTTP) to get link info instead of spawning Python processes.
-            scraperQueue.add(async () => {
-                try {
-                    const result = await requestScraperServer('/link', { package: packageName }, 3);
-                // Prefer absolute file_path if provided by the scraper/server. Else fallback to local downloads/filename
-                let filePath = result.file_path || (result.filename ? path.join('downloads', result.filename) : null);
+            // Use scraper server (HTTP) to download the APK directly
+            try {
+                const result = await requestScraperServer('/download', { package: packageName }, 3);
+                
+                if (!result || !result.success) {
+                    log.error(`Download failed: ${result?.error || 'Unknown error'}`);
+                    return resolve({ error: result?.error || 'فشل التحميل' });
+                }
+                
+                let filePath = result.file_path;
                 if (!filePath || !fs.existsSync(filePath)) {
-                    // If we have a URL but no file on disk, request the server to perform the full download
-                    if (result.url) {
-                        await sendMessage(sock, sender, { text: `🔁 جاري تنزيل الملف الآن... الرجاء الانتظار قليلاً` });
-                        try {
-                            const dlRes = await requestScraperServer('/download', { package: result.packageName || result.package || appName }, 3);
-                            // dlRes will be the response JSON
-                            // If requestScraperServer didn't throw, dlRes is the JSON object, so assign to dlRes
-                            // To keep behavior consistent, treat dlRes similar to axios response data
-                            if (dlRes && dlRes.success) {
-                                if (dlRes.file_path) {
-                                    filePath = dlRes.file_path;
-                                    result.filename = dlRes.filename || result.filename;
-                                    result.file_path = filePath;
-                                }
-                            }
-                            if (dlRes.data && dlRes.data.success && dlRes.data.file_path) {
-                                filePath = dlRes.data.file_path;
-                                result.filename = dlRes.data.filename || result.filename;
-                                result.file_path = filePath;
-                            }
-                        } catch (err) {
-                            log.error(`Download via server failed: ${err.message}`);
-                        }
-                    }
-
-                    if (!filePath || !fs.existsSync(filePath)) {
-                        log.error(`الملف غير موجود: ${filePath}`);
-                        // if server returned a download URL, send it to the user as a fallback
-                        if (result && result.url) {
-                            const linkMsg = `🔗 *رابط التحميل المباشر*\n\n` +
-                                `📱 ${appTitle}\n` +
-                                `🔗 ${result.url}\n\n` +
-                                `⚠️ ملاحظة: قد يتطلب التحميل فتح المتصفح أو برامج إدارة التحميل.`;
-                            await sendMessage(sock, sender, { text: linkMsg });
-                        } else {
-                            await sendMessage(sock, sender, { 
-                                text: `╔═══════════════════════════════════════════════╗\n║   ⚠️ *خطأ: الملف غير موجود*  ║\n╚═══════════════════════════════════════════════╝\n\n` +
-                                    `❌ للأسف لم يتمكن النظام من\nالعثور على الملف المحمل\n\n🔄 *ما العمل:*\n• حاول الطلب مرة أخرى\n• استخدم اسم مختلف للتطبيق\n• تأكد من الإنترنت\n\n═══════════════════════════════════════════════\n📲 *تابعني:* ${DEVELOPER_INFO.instagram}`
-                            });
-                        }
-                        return;
-                    }
+                    log.error(`الملف غير موجود: ${filePath}`);
+                    return resolve({ error: 'الملف غير موجود بعد التحميل' });
                 }
-                    const resultData = {
-                        name: appTitle,
-                        packageName: packageName,
-                        version: 'Latest',
-                        size: 'Unknown',
-                        sizeMB: 0,
-                        rating: appRating,
-                        icon: appIcon,
-                        filename: result.filename || `${packageName}.apk`,
-                        isXapk: !!result.is_xapk,
-                        file_path: result.file_path || null,
-                        url: result.url || null,
-                    };
+                
+                const stats = fs.statSync(filePath);
+                const fileSizeMB = stats.size / (1024 * 1024);
+                
+                const resultData = {
+                    name: appTitle,
+                    packageName: packageName,
+                    version: 'Latest',
+                    size: `${fileSizeMB.toFixed(2)} MB`,
+                    sizeMB: fileSizeMB,
+                    rating: appRating,
+                    icon: appIcon,
+                    filename: result.filename || `${packageName}.apk`,
+                    isXapk: !!result.is_xapk,
+                    file_path: filePath,
+                };
 
-                    // We don't cache link-only results that don't include a filename
-                    if (resultData.filename && resultData.file_path) {
-                        appCache.set(cacheKey, resultData);
-                        log.success(`💾 Cached: ${appName}`);
-                    }
+                appCache.set(cacheKey, resultData);
+                log.success(`💾 Cached: ${appName}`);
 
-                    return resultData;
-                } catch (err) {
-                    log.error(`Scraper server call failed: ${err.message}`);
-                    // Improve error reporting and avoid generic message unless we've exhausted retries
-                    return { error: `فشل الاتصال بخادم التحميل: ${err.message}` };
-                }
-            }).then((result) => {
-                resolve(result);
-            }).catch((error) => {
-                log.error(`خطأ في البحث: ${error.message}`);
-                resolve({ error: 'فشل البحث عن التطبيق' });
-            });
+                return resolve(resultData);
+            } catch (err) {
+                log.error(`Scraper server call failed: ${err.message}`);
+                return resolve({ error: `فشل الاتصال بخادم التحميل: ${err.message}` });
+            }
         } catch (error) {
             log.error(`خطأ في البحث: ${error.message}`);
             resolve({ error: 'فشل البحث عن التطبيق' });
