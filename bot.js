@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const gplay = require('google-play-scraper');
 const axios = require('axios');
+const http = require('http');
 const PQueue = require('p-queue').default;
 const NodeCache = require('node-cache');
 
@@ -33,6 +34,7 @@ const log = {
 const MAX_FILE_SIZE_MB = 2048;
 const CACHE_DURATION = 15 * 60 * 1000;
 const QUEUE_CONCURRENCY = 100;
+const SCRAPER_QUEUE_CONCURRENCY = parseInt(process.env.SCRAPER_QUEUE_CONCURRENCY || '25'); // Limit concurrent scraper calls
 
 const DEVELOPER_INFO = {
     name: 'Omar Xaraf',
@@ -42,7 +44,10 @@ const DEVELOPER_INFO = {
     thumbnail: 'https://i.imgur.com/7FZJvPp.jpeg'
 };
 
+const SENT_KEEP_TTL = 2 * 60 * 60; // 2 hours for files recently sent
+
 const requestQueue = new PQueue({ concurrency: QUEUE_CONCURRENCY });
+const scraperQueue = new PQueue({ concurrency: SCRAPER_QUEUE_CONCURRENCY });
 const appCache = new NodeCache({ stdTTL: CACHE_DURATION / 1000, checkperiod: 120 });
 const requestTracker = new Map();
 
@@ -79,6 +84,75 @@ appCache.on('expired', (key, value) => {
 });
 
 let sock;
+const SCRAPER_SERVER_URL = process.env.SCRAPER_SERVER_URL || 'http://127.0.0.1:8001';
+let scraperServerProcess = null;
+
+const scraperClient = axios.create({ baseURL: SCRAPER_SERVER_URL, timeout: 30000, httpAgent: new http.Agent({ keepAlive: true }) });
+
+async function ensureScraperServer() {
+    try {
+        const res = await scraperClient.get(`/health`, { timeout: 2000 });
+        if (res.data && res.data.status === 'ok') {
+            log.success(`✅ Scraper server available: concurrency ${res.data.concurrency}`);
+            return true;
+        }
+    } catch (e) {
+        log.info('🔁 Scraper server not available, starting local server...');
+    }
+
+    try {
+        // spawn the server in background
+        scraperServerProcess = spawn('python3', ['scraper_server.py'], {
+            detached: false,
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        scraperServerProcess.stdout.on('data', (d) => log.info(`[scraper] ${d.toString().trim()}`));
+        scraperServerProcess.stderr.on('data', (d) => log.warn(`[scraper-err] ${d.toString().trim()}`));
+        // wait a moment and attempt health check
+        const start = Date.now();
+        while (Date.now() - start < 10000) {
+            try {
+                const res = await scraperClient.get(`/health`, { timeout: 2000 });
+                if (res.data && res.data.status === 'ok') {
+                    log.success('✅ Scraper server started');
+                    return true;
+                }
+            } catch (e) {
+                await new Promise(r => setTimeout(r, 250));
+            }
+        }
+    } catch (err) {
+        log.error(`Failed to start scraper server: ${err.message}`);
+    }
+
+    return false;
+}
+
+async function requestScraperServer(path, params = {}, retries = 3) {
+    // request helper with retries and server spawn fallback
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const res = await scraperClient.get(path, { params, timeout: 30000 });
+            return res.data;
+        } catch (err) {
+            log.warn(`Scraper server request failed (attempt ${attempt}/${retries}): ${err.message}`);
+            // Try ensure server is running on first error
+            if (attempt === 1) {
+                try {
+                    await ensureScraperServer();
+                } catch (e) {
+                    log.warn('ensureScraperServer failed while retrying');
+                }
+            }
+            if (attempt < retries) {
+                // small backoff
+                await new Promise(r => setTimeout(r, 500 * attempt));
+                continue;
+            }
+            throw err;
+        }
+    }
+}
 let isConnected = false;
 let pairingCodeRequested = false;
 let pairingCodeShown = false;
@@ -128,6 +202,8 @@ async function connectToWhatsApp() {
     }
     
     isReconnecting = true;
+    // ensure scraper server is running first
+    try { await ensureScraperServer(); } catch (e) { log.warn('Failed to ensure scraper server on start'); }
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     const { version, isLatest } = await fetchLatestBaileysVersion();
 
@@ -274,13 +350,30 @@ async function connectToWhatsApp() {
             log.info(`📨 Message from ${sender.split('@')[0]}: ${textMessage}`);
 
             if (textMessage.toLowerCase() === 'hi' || textMessage.toLowerCase() === 'hello' || textMessage.toLowerCase() === 'السلام عليكم' || textMessage.toLowerCase() === 'مرحبا') {
-                const welcomeMessage = `🤖 *بوت تحميل التطبيقات*\n\n` +
-                    `أرسل اسم أي تطبيق لتحميله 📱\n` +
-                    `مثال: واتساب، فري فاير، بابجي\n\n` +
-                    `✅ يدعم APK و XAPK\n` +
-                    `✅ حجم حتى ${MAX_FILE_SIZE_MB}MB\n` +
-                    `⚡ يدعم ${QUEUE_CONCURRENCY}+ مستخدم متزامن\n\n` +
-                    `📲 *تابعني:* ${DEVELOPER_INFO.instagram}`;
+                const welcomeMessage = `╔════════════════════════════════════════════════╗
+║  🤖 *بوت تحميل التطبيقات الذكي*  ║
+╚════════════════════════════════════════════════╝
+
+✨ *أهلاً وسهلاً بك!*
+
+📱 *كيفية الاستخدام:*
+اكتب اسم التطبيق المراد تحميله
+
+📋 *أمثلة سريعة:*
+• واتساب • فري فاير • بابجي
+• انستقرام • تيك توك • يوتيوب
+
+✨ *المميزات:*
+✅ تحميل سريع جداً ⚡
+✅ يدعم APK و XAPK 📦
+✅ أحجام حتى ${MAX_FILE_SIZE_MB}MB 💾
+✅ ${QUEUE_CONCURRENCY}+ مستخدم متزامن 👥
+✅ معلومات التطبيق الكاملة 📊
+
+═════════════════════════════════════════════════
+📲 *تابعني للمزيد:*
+${DEVELOPER_INFO.instagram}
+═════════════════════════════════════════════════`;
 
                 await sendMessage(sock, sender, { text: welcomeMessage });
                 return;
@@ -379,7 +472,19 @@ async function handleAppRequest(textMessage, sender, messageKey, sock, requestId
             }
         });
         
-        const result = await searchAndDownloadApp(appName);
+        let result = await searchAndDownloadApp(appName);
+        // If server connectivity issue occurred, retry once after ensuring server is up
+        if (result && result.error && result.error.includes('فشل الاتصال بخادم التحميل')) {
+            log.warn('Detected scraper server connectivity issue - retrying search once');
+            try {
+                await ensureScraperServer();
+                // small backoff
+                await new Promise(r => setTimeout(r, 300));
+                result = await searchAndDownloadApp(appName);
+            } catch (retryErr) {
+                log.warn(`Retry failed: ${retryErr.message}`);
+            }
+        }
 
         if (!result) {
             log.error(`No result returned from scraper`);
@@ -392,9 +497,17 @@ async function handleAppRequest(textMessage, sender, messageKey, sock, requestId
         if (result.error) {
             log.error(`خطأ: ${result.error}`);
             if (isConnected && !isReconnecting) {
-                await sendMessage(sock, sender, { 
-                    text: `❌ ${result.error}\n\n📲 *تابعني:* ${DEVELOPER_INFO.instagram}`
-                });
+                if (result.error.includes('فشل الاتصال')) {
+                    const friendly = `⚠️ *خطأ في اتصال الخادم*\n\n` +
+                        `لا يمكن الوصول إلى خادم التحميل الآن، سيتم إعادة المحاولة تلقائياً.` +
+                        `\n
+إذا استمر الخطأ، يرجى المحاولة لاحقًا.`;
+                    await sendMessage(sock, sender, { text: friendly });
+                } else {
+                    await sendMessage(sock, sender, { 
+                        text: `❌ ${result.error}\n\n📲 *تابعني:* ${DEVELOPER_INFO.instagram}`
+                    });
+                }
             }
             return;
         }
@@ -473,6 +586,18 @@ async function handleAppRequest(textMessage, sender, messageKey, sock, requestId
                 key: messageKey
             }
         });
+
+        // Refresh cache TTL to avoid deletion right after a send
+        try {
+            const cacheKey = appName.toLowerCase();
+            const cached = appCache.get(cacheKey);
+            if (cached) {
+                appCache.ttl(cacheKey, SENT_KEEP_TTL);
+                log.info(`🔒 Extended TTL for cached ${cacheKey} by ${SENT_KEEP_TTL}s`);
+            }
+        } catch (err) {
+            log.warn(`Failed to extend cache TTL: ${err.message}`);
+        }
 
         const totalTime = Date.now() - startTime;
         log.success(`✅ تم الإرسال بنجاح في ${totalTime}ms`);
@@ -554,88 +679,95 @@ async function searchAndDownloadApp(appName) {
             
             log.info(`🔎 APKPure download: ${packageName}...`);
 
-            const pythonProcess = spawn('python3', ['scraper.py', packageName]);
+            // Ensure the scraper server is available
+            try {
+                await ensureScraperServer();
+            } catch (err) {
+                log.warn('Could not ensure scraper server availability, proceeding with local call if needed');
+            }
 
-            let output = '';
-            let errorOutput = '';
-            let processTimeout;
-
-            processTimeout = setTimeout(() => {
-                pythonProcess.kill('SIGTERM');
-                log.error('⏱️ Python process timeout (120s)');
-            }, 120000);
-
-            pythonProcess.stdout.on('data', (data) => {
-                output += data.toString();
-            });
-
-            pythonProcess.stderr.on('data', (data) => {
-                errorOutput += data.toString();
-            });
-
-            pythonProcess.on('close', async (code) => {
-                clearTimeout(processTimeout);
-                const searchTime = Date.now() - startTime;
-                
-                if (code !== 0) {
-                    log.error(`Python scraper exited with code ${code}`);
-                    if (errorOutput) log.error(`Error: ${errorOutput}`);
-                    resolve({ error: 'فشل البحث عن التطبيق' });
-                    return;
-                }
-
-                const lines = output.trim().split('\n');
-                const lastLine = lines[lines.length - 1];
-
+            // Use scraper server (HTTP) to get link info instead of spawning Python processes.
+            scraperQueue.add(async () => {
                 try {
-                    const result = JSON.parse(lastLine);
-                    
-                    if (result.error) {
-                        log.warn(`⚠ Scraper error: ${result.error} - NOT caching`);
-                        resolve({ error: result.error });
-                        return;
+                    const result = await requestScraperServer('/link', { package: packageName }, 3);
+                // Prefer absolute file_path if provided by the scraper/server. Else fallback to local downloads/filename
+                let filePath = result.file_path || (result.filename ? path.join('downloads', result.filename) : null);
+                if (!filePath || !fs.existsSync(filePath)) {
+                    // If we have a URL but no file on disk, request the server to perform the full download
+                    if (result.url) {
+                        await sendMessage(sock, sender, { text: `🔁 جاري تنزيل الملف الآن... الرجاء الانتظار قليلاً` });
+                        try {
+                            const dlRes = await requestScraperServer('/download', { package: result.packageName || result.package || appName }, 3);
+                            // dlRes will be the response JSON
+                            // If requestScraperServer didn't throw, dlRes is the JSON object, so assign to dlRes
+                            // To keep behavior consistent, treat dlRes similar to axios response data
+                            if (dlRes && dlRes.success) {
+                                if (dlRes.file_path) {
+                                    filePath = dlRes.file_path;
+                                    result.filename = dlRes.filename || result.filename;
+                                    result.file_path = filePath;
+                                }
+                            }
+                            if (dlRes.data && dlRes.data.success && dlRes.data.file_path) {
+                                filePath = dlRes.data.file_path;
+                                result.filename = dlRes.data.filename || result.filename;
+                                result.file_path = filePath;
+                            }
+                        } catch (err) {
+                            log.error(`Download via server failed: ${err.message}`);
+                        }
                     }
 
-                    if (!result.success || !result.filename || !result.file_path) {
-                        log.error(`Invalid scraper response - NOT caching`);
-                        resolve({ error: 'فشل التحميل' });
+                    if (!filePath || !fs.existsSync(filePath)) {
+                        log.error(`الملف غير موجود: ${filePath}`);
+                        // if server returned a download URL, send it to the user as a fallback
+                        if (result && result.url) {
+                            const linkMsg = `🔗 *رابط التحميل المباشر*\n\n` +
+                                `📱 ${appTitle}\n` +
+                                `🔗 ${result.url}\n\n` +
+                                `⚠️ ملاحظة: قد يتطلب التحميل فتح المتصفح أو برامج إدارة التحميل.`;
+                            await sendMessage(sock, sender, { text: linkMsg });
+                        } else {
+                            await sendMessage(sock, sender, { 
+                                text: `╔═══════════════════════════════════════════════╗\n║   ⚠️ *خطأ: الملف غير موجود*  ║\n╚═══════════════════════════════════════════════╝\n\n` +
+                                    `❌ للأسف لم يتمكن النظام من\nالعثور على الملف المحمل\n\n🔄 *ما العمل:*\n• حاول الطلب مرة أخرى\n• استخدم اسم مختلف للتطبيق\n• تأكد من الإنترنت\n\n═══════════════════════════════════════════════\n📲 *تابعني:* ${DEVELOPER_INFO.instagram}`
+                            });
+                        }
                         return;
                     }
-
-                    const filePath = result.file_path;
-                    const fileSizeInBytes = result.size;
-                    const fileSizeInMB = fileSizeInBytes / (1024 * 1024);
-
+                }
                     const resultData = {
                         name: appTitle,
                         packageName: packageName,
-                        version: result.filename.match(/_([\d.]+)_/)?.[1] || 'Latest',
-                        size: `${fileSizeInMB.toFixed(2)}MB`,
-                        sizeMB: fileSizeInMB,
+                        version: 'Latest',
+                        size: 'Unknown',
+                        sizeMB: 0,
                         rating: appRating,
                         icon: appIcon,
-                        filename: result.filename,
-                        isXapk: result.is_xapk || false
+                        filename: result.filename || `${packageName}.apk`,
+                        isXapk: !!result.is_xapk,
+                        file_path: result.file_path || null,
+                        url: result.url || null,
                     };
-                    
-                    appCache.set(cacheKey, resultData);
-                    log.success(`💾 Cached: ${appName}`);
-                    
-                    log.success(`⚡ Search completed in ${searchTime}ms`);
-                    resolve(resultData);
 
-                } catch (parseError) {
-                    log.error(`فشل تحليل الإخراج: ${parseError.message}`);
-                    resolve({ error: 'خطأ في معالجة البيانات' });
+                    // We don't cache link-only results that don't include a filename
+                    if (resultData.filename && resultData.file_path) {
+                        appCache.set(cacheKey, resultData);
+                        log.success(`💾 Cached: ${appName}`);
+                    }
+
+                    return resultData;
+                } catch (err) {
+                    log.error(`Scraper server call failed: ${err.message}`);
+                    // Improve error reporting and avoid generic message unless we've exhausted retries
+                    return { error: `فشل الاتصال بخادم التحميل: ${err.message}` };
                 }
+            }).then((result) => {
+                resolve(result);
+            }).catch((error) => {
+                log.error(`خطأ في البحث: ${error.message}`);
+                resolve({ error: 'فشل البحث عن التطبيق' });
             });
-
-            pythonProcess.on('error', (error) => {
-                clearTimeout(processTimeout);
-                log.error(`فشل تشغيل Python: ${error.message}`);
-                resolve({ error: 'خطأ في النظام' });
-            });
-
         } catch (error) {
             log.error(`خطأ في البحث: ${error.message}`);
             resolve({ error: 'فشل البحث عن التطبيق' });
@@ -654,7 +786,8 @@ if (!fs.existsSync('auth_info_baileys')) {
 setInterval(() => {
     const stats = appCache.getStats();
     log.info(`📊 Cache Stats: ${stats.keys} items, ${stats.hits} hits, ${stats.misses} misses`);
-    log.info(`📊 Queue: ${requestQueue.size} waiting, ${requestQueue.pending} processing`);
+    log.info(`📊 Request Queue: ${requestQueue.size} waiting, ${requestQueue.pending} processing`);
+    log.info(`📊 Scraper Queue: ${scraperQueue.size} waiting, ${scraperQueue.pending} processing`);
     log.info(`📊 Active Requests: ${requestTracker.size}`);
 }, 300000);
 
